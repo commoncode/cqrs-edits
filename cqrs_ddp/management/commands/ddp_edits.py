@@ -1,6 +1,6 @@
-
-
 from django.core.management.base import BaseCommand
+
+from cqrs_ddp.ddp_client import DdpCmd
 
 
 class Command(BaseCommand):
