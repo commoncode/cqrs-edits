@@ -1,2 +1,2 @@
-cqrs.ddp
-========
+cqrs edits
+==========

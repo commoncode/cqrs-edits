@@ -12,6 +12,9 @@ from ws4py.client.threadedclient import WebSocketClient
 from cmd import Cmd
 
 
+from .models import EditLog
+
+
 DDP_VERSIONS = ["pre1"]
 
 def log(msg):
@@ -96,13 +99,135 @@ class DDPClient(WebSocketClient):
         self.send({"msg": "connect", "version": DDP_VERSIONS[0],
                    "support": DDP_VERSIONS})
 
+    def process_edits(self, msg):
+
+        edit_collection = 'edit_documents'
+        edit_operation = {
+            'state': None,
+            'action': None
+        }
+
+        if msg['collection'] == edit_collection:
+            if 'fields' in msg:
+                for key, value in msg['fields'].items():
+                    if key == 'state':
+                        edit_operation['state'] = value
+                    if key == 'action':
+                        edit_operation['action'] = value
+
+            if edit_operation['state'] is not None:
+                log("#### CQRS OPERATION ####")
+                log("{} :: {} on {}".format(
+                    edit_operation['state'],
+                    edit_operation['action'],
+                    msg['id']
+                ))
+
+                if edit_operation['state'] == 'committed':
+                    log("## COMMIT: {} ##".format(edit_operation['action']));
+
+                    # msg = {}
+                    # msg['id'] = 'EJa8TrvFihnuZGsfF'
+
+                    import os
+                    import pymongo
+                    import time
+
+                    MONGO_URL = os.environ.get('MONGO_URL', False)
+
+                    if MONGO_URL:
+                        client = pymongo.MongoClient(host=MONGO_URL)
+                    else:
+                        client = pymongo.MongoClient('localhost', 27017)
+
+                    db = client.get_default_database()
+
+                    # fetch the actual Document from Mongo to work with it.
+                    edit_doc = db.edit_documents.find_one({'_id': msg['id']})
+
+                    # fetch the diffs which will be useful to determine which
+                    # changes to apply
+                    edit_diff = db.edit_diffs.find_one({'editDocId': edit_doc['_id']})
+
+                    # these are the key's that we'll update
+                    update_keys = edit_doc['origObj'].keys()
+                    if 'id' in update_keys:
+                        update_keys.remove('id') # except for id
+
+                    obj = {}
+                    for key in update_keys:
+                        if key != 'id':
+                            # @@@ perform any hydration / parsing
+                            # @@@ test for any diffs
+                            if key in edit_diff['diffs'].keys():
+                                obj[key] = edit_doc[key]
+
+                    log("## OBJECT: {}".format(obj))
+
+                    import time
+                    states = ['acknowledged', 'saved', 'reported',]
+                    for state in states:
+                        time.sleep(1)
+                        log("## UPDATE {}".format(state.upper()))
+                        db.edit_documents.update(
+                            {'_id': edit_doc['_id']},
+                            { '$set': {
+                                'state': state
+                            }})
+
+                    db.edit_documents.update(
+                        {'_id': edit_doc['_id']},
+                        { '$set': {
+                            'state': 'ready',
+                            'action': 'read'
+                        }})
+                    log("## READY READ")
+
+
+                log("++++ END CQRS OPERATION ++++")
+
+                    # klass = get_model(edit_doc['docType'])
+                    # obj_id = edit_doc['origObj']['id']
+
+                    # try:
+                    #     obj = klass.objects.get(id=obj_id)
+                    # except klass.DoesNotExist:
+                    #     log("FAIL")
+                    # else:
+                    #     for key in update_keys:
+                    #         if key != 'name':
+                    #             # @@@ perform any hydration / parsing
+                    #             # @@@ test for any diffs
+                    #             if hasattr(edit_diff.diffs, key):
+                    #             obj[key] = edit_doc['origObj'][key]
+                    #     try:
+                    #         obj.full_clean()
+                    #     except Exception:
+                    #         pass
+                    #         # update edit doc to 'error'
+                    #     else:
+                    #         # save and update the edit doc to 'save'
+                    #         obj.save()
+
+
+
     def received_message(self, data):
         """Parse an incoming message and print it. Also update
         self.pending appropriately"""
+
+
+
         if self.print_raw:
             log('[RAW] << {}'.format(data))
 
         msg = json.loads(str(data))
+
+        # import ipdb; ipdb.set_trace()
+
+        edit_log = EditLog(blob=msg)
+        edit_log.save()
+
+
 
         changed_pending = False
 
@@ -137,6 +262,8 @@ class DDPClient(WebSocketClient):
                     for key, value in msg['fields'].items():
                         log("  - FIELD {} {}".format(key, value))
 
+                self.process_edits(msg)
+
             elif msg.get('msg') == 'changed':
                 log("* CHANGED {} {}".format(
                         msg['collection'], msg['id']))
@@ -146,6 +273,9 @@ class DDPClient(WebSocketClient):
                 if 'cleared' in msg:
                     for key in msg['cleared']:
                         log("  - CLEARED {}".format(key));
+
+                self.process_edits(msg)
+
 
             elif msg.get('msg') == 'removed':
                 log("* REMOVED {} {}".format(

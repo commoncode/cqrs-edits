@@ -1,11 +1,11 @@
 from setuptools import setup, find_packages
 
-setup( name='cqrs.ddp',
+setup( name='cqrs-edits',
     version = '0.0.1',
-    description = 'CQRS DDP Client',
+    description = 'CQRS Edits including DDP Client & Mongo Oplog',
     author = 'Daryl Antony',
     author_email = 'daryl@commoncode.com.au',
-    url = 'https://github.com/commoncode/cqrs.ddp',
+    url = 'https://github.com/commoncode/cqrs-edits',
     keywords = ['django',],
     packages = find_packages(),
     include_package_data = True,
